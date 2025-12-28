@@ -6,12 +6,14 @@
 #include <errno.h>
 #include <cstdlib>
 #include <poll.h> 
+#include "game.h"
 
 
 #define BUFFER_SIZE 256
 #define INITIAL_CAPACITY 10
 
 int main(int argc, char **argv){
+    setvbuf(stdout, NULL, _IONBF, 0);
     sockaddr_in server;
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = inet_addr("127.0.0.1");
@@ -23,6 +25,11 @@ int main(int argc, char **argv){
         return 1;
     }
     
+    int opt = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        printf("Error setsockopt %s \n", strerror(errno));
+        return 1;
+    }
 
     int serwer = bind(fd,(struct sockaddr *)&server,sizeof(server));
 
@@ -33,6 +40,9 @@ int main(int argc, char **argv){
 
     listen(fd, SOMAXCONN);
     printf("Server is listening on port 1234...\n");
+
+    Game game;
+    game_init(game);
 
     //Dynamic poll Table init
     int capacity = INITIAL_CAPACITY;
@@ -67,6 +77,8 @@ int main(int argc, char **argv){
                 continue;
             }
 
+            game_add_player(game, client);
+
             printf("New connection: %s:%d (fd=%d, Number of clients total: %d)\n", 
                    inet_ntoa(client_data.sin_addr), 
                    ntohs(client_data.sin_port),
@@ -93,37 +105,46 @@ int main(int argc, char **argv){
         }
 
         for (int i = 1; i < nfds; i++) {
-            if (fds[i].revents & POLLIN){
-                char buf[BUFFER_SIZE];
-                int bytes_read = read(fds[i].fd, buf, sizeof(buf) - 1);
+            if (fds[i].revents & POLLIN) {
+            char buf[BUFFER_SIZE];
 
-                if (bytes_read <= 0){
-                    if (bytes_read == 0){
-                        printf("Client fd=%d has disconnected\n", fds[i].fd);
-                    } else {
-                        printf("Read error for fd=%d: %s\n", fds[i].fd, strerror(errno));
-                    }
+            int bytes_read = read(fds[i].fd, buf, sizeof(buf) - 1);
 
-                    close(fds[i].fd);
-                    fds[i] = fds[nfds - 1];
-                    nfds--;
-                    i--; 
+            if (bytes_read <= 0) {
+                if (bytes_read == 0) {
+                    printf("Client fd=%d has disconnected\n", fds[i].fd);
                 } else {
-                    buf[bytes_read] = '\0';
-                    printf("Received %d bytes from fd=%d: %s", bytes_read, fds[i].fd, buf);
-                    
-                    for (int j = 1; j < nfds; j++) {
-                        ssize_t written = write(fds[j].fd, buf, bytes_read);
-                        if (written < 0) {
-                            printf("Write error to fd=%d: %s\n", fds[j].fd, strerror(errno));
-                        }
-                    }
+                    printf("Read error for fd=%d: %s\n", fds[i].fd, strerror(errno));
                 }
-        }
 
+                game_remove_player(game, fds[i].fd);
+                close(fds[i].fd);
+
+                fds[i] = fds[nfds - 1];
+                nfds--;
+                i--;
+                continue;
+            }
+
+            buf[bytes_read] = '\0';
+
+            printf("DEBUG RAW: [%s]\n", buf);
+
+            std::string msg(buf);
+            msg.erase(msg.find_last_not_of("\r\n") + 1);
+
+            std::string response = game_handle_message(game, fds[i].fd, msg);
+
+            if (!response.empty()) {
+                for (int j = 1; j < nfds; j++) {
+                    write(fds[j].fd, response.c_str(), response.size());
+                }
     }
+}
+        }
     }
     for (int i = 0; i < nfds; i++){
+        game_remove_player(game, fds[i].fd);
         close(fds[i].fd);
     }
     
