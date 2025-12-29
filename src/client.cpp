@@ -116,6 +116,7 @@ int main() {
     while (window.isOpen()) {
 
         sf::Event event;
+        bool inputChanged = false;
 
         while (window.pollEvent(event)) {
             // Close the client
@@ -123,6 +124,7 @@ int main() {
                 window.close();
 
             if (event.type == sf::Event::TextEntered) {
+                inputChanged = true;
                 if (event.text.unicode == 8) { //8 is backspace
                     // crash prevention - deleting nothing
                     if (!userInput.isEmpty())
@@ -166,12 +168,12 @@ int main() {
     
         }
 
+        if (inputChanged) {
         inputText.setString(userInput);
-
-        //centering
-        float verticalCenter = inputText.getCharacterSize() / 2.0f;
-        inputText.setOrigin(0, verticalCenter); 
-        inputText.setPosition(inputBox.getPosition().x + 10, inputBox.getPosition().y + inputBox.getSize().y / 2.0f);
+        // centering text in box
+        inputText.setPosition(inputBox.getPosition().x + 10, 
+                              inputBox.getPosition().y + inputBox.getSize().y / 2.0f - inputText.getCharacterSize() / 2.0f);
+        }
 
         //simple cursor
         sf::Text displayText = inputText;
