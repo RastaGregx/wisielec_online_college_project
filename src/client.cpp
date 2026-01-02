@@ -38,6 +38,9 @@ int net_connection() {
     return my_fd;
 }
 
+int mode = 0; // 0 = Inputting Nick, 1 = Game
+sf::Text* promptPtr = nullptr;
+
 void poll_handler(int &my_fd) {
     struct pollfd pfd;
     pfd.fd = my_fd;
@@ -49,22 +52,47 @@ void poll_handler(int &my_fd) {
         if (pfd.revents & POLLIN) {
             char buffer[512];
             ssize_t received = recv(my_fd, buffer, sizeof(buffer) - 1, 0);
+
             if (received > 0) {
                 buffer[received] = '\0';
-                printf("Server: %s\n", buffer);
-            } else if (received == 0) {
-                printf("Server closed the connection.\n");
-                close(my_fd);
-                my_fd = -1;
-            } else {
-                if (errno != EWOULDBLOCK && errno != EAGAIN) {
-                    printf("Receive error: %s\n", strerror(errno));
+                std::string msg(buffer);
+
+                printf("Server: %s\n", msg.c_str());
+                
+                // Nick ok
+                if (msg.find("NICK_OK") != std::string::npos) {
+                    mode = 1;
+                    if (promptPtr) {
+                        promptPtr->setString("Guess the password:");
+                        sf::FloatRect r = promptPtr->getLocalBounds();
+                        promptPtr->setOrigin(r.left + r.width / 2.f,
+                                            r.top + r.height / 2.f);
+                        promptPtr->setPosition(800 / 2.f, 250);
+                    }
+                }
+
+                // Nick taken
+                else if (msg.find("NICK_TAKEN") != std::string::npos) {
+                    mode = 0;
+                    if (promptPtr) {
+                        promptPtr->setString("Nickname taken! Enter another:");
+                        sf::FloatRect r = promptPtr->getLocalBounds();
+                        promptPtr->setOrigin(r.left + r.width / 2.f,
+                                            r.top + r.height / 2.f);
+                        promptPtr->setPosition(800 / 2.f, 250);
+                    }
+                }
+
+                else if (received == 0) {
+                    printf("Server closed connection\n");
+                    close(my_fd);
+                    my_fd = -1;
                 }
             }
-        }
     }
 }
-
+}
+        
 int main() {
     sf::RenderWindow window(sf::VideoMode(800, 600), "Wisielec Online");
     window.setFramerateLimit(60);
@@ -89,6 +117,7 @@ int main() {
     prompt.setString("Enter your nickname below:");
     prompt.setCharacterSize(36);
     prompt.setFillColor(sf::Color::Black);
+    promptPtr = &prompt;
     sf::FloatRect promptRect = prompt.getLocalBounds();
     prompt.setOrigin(promptRect.left + promptRect.width / 2.0f, promptRect.top + promptRect.height / 2.0f);
     prompt.setPosition(800 / 2.0f, 250);
@@ -108,9 +137,6 @@ int main() {
     inputBox.setPosition(800 / 2.0f - 200, 320);
 
     int my_fd = net_connection();
-
-    // the nickname mode
-    int mode = 0 ;
 
     // Main window loop
     while (window.isOpen()) {
@@ -140,14 +166,12 @@ int main() {
 
                         if (my_fd >= 0) {
                             send(my_fd, message.c_str(), message.size(), 0);
-                        } else {
+                        } 
+
+                        else {
                             printf("Error sending nickname: %s\n", strerror(errno));
                         }
-                        
-                        //mode change
                         userInput.clear();
-                        mode = 1;
-                        prompt.setString("Guess the password:");
                         sf::FloatRect promptRect = prompt.getLocalBounds();
                         prompt.setOrigin(promptRect.left + promptRect.width / 2.0f,
                                         promptRect.top + promptRect.height / 2.0f);
@@ -161,9 +185,15 @@ int main() {
                         userInput.clear();
                     }
                 } else if (event.text.unicode < 128) { //input limit to ascii and 20 char only
-                    if (userInput.getSize() < 20) 
-                        userInput += static_cast<char>(event.text.unicode);
-                }
+                    if (mode == 1) { // guessing
+                        if (userInput.getSize() < 1 && event.text.unicode < 128) {
+                            userInput += static_cast<char>(event.text.unicode);
+                        }
+                    } else {
+                        if (userInput.getSize() < 20 && event.text.unicode < 128) {
+                            userInput += static_cast<char>(event.text.unicode);
+                        }
+                    }
             }
     
         }
@@ -188,7 +218,9 @@ int main() {
 
         if (my_fd >= 0) poll_handler(my_fd);
     }
+}
 
     if (my_fd >= 0) close(my_fd);
     return 0;
 }
+

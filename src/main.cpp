@@ -137,7 +137,7 @@ int main(int argc, char **argv){
 
             if (!response.empty()) {
                 for (int j = 1; j < nfds; j++) {
-                    write(fds[j].fd, response.c_str(), response.size());
+                    write(fds[i].fd, response.c_str(), response.size());
                 }
     }
 }
