@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include <poll.h> 
 #include "game.h"
-
+#include <sstream>
 
 #define BUFFER_SIZE 256
 #define INITIAL_CAPACITY 10
@@ -106,43 +106,94 @@ int main(int argc, char **argv){
 
         for (int i = 1; i < nfds; i++) {
             if (fds[i].revents & POLLIN) {
-            char buf[BUFFER_SIZE];
+                char buf[BUFFER_SIZE];
 
-            int bytes_read = read(fds[i].fd, buf, sizeof(buf) - 1);
+                int bytes_read = read(fds[i].fd, buf, sizeof(buf) - 1);
 
-            if (bytes_read <= 0) {
-                if (bytes_read == 0) {
-                    printf("Client fd=%d has disconnected\n", fds[i].fd);
-                } else {
-                    printf("Read error for fd=%d: %s\n", fds[i].fd, strerror(errno));
+                if (bytes_read <= 0) {
+                    if (bytes_read == 0) {
+                        printf("Client fd=%d has disconnected\n", fds[i].fd);
+                    } else {
+                        printf("Read error for fd=%d: %s\n", fds[i].fd, strerror(errno));
+                    }
+
+                    game_remove_player(game, fds[i].fd);
+                    close(fds[i].fd);
+
+                    fds[i] = fds[nfds - 1];
+                    nfds--;
+                    i--;
+                    continue;
                 }
 
-                game_remove_player(game, fds[i].fd);
-                close(fds[i].fd);
+                buf[bytes_read] = '\0';
 
-                fds[i] = fds[nfds - 1];
-                nfds--;
-                i--;
-                continue;
+                printf("DEBUG RAW: [%s]\n", buf);
+
+                std::string msg(buf);
+                msg.erase(msg.find_last_not_of("\r\n") + 1);
+
+                std::string response = game_handle_message(game, fds[i].fd, msg);
+
+                printf("DEBUG: Response from game_handle_message:\n%s\n", response.c_str());
+
+                if (!response.empty()) {
+                    // Parse response to determine broadcast vs personal
+                    std::istringstream iss(response);
+                    std::string line;
+                    std::string broadcast_msg;
+                    std::string personal_msg;
+
+                    while (std::getline(iss, line)) {
+                        if (line.empty()) continue; // Skip empty lines
+                        
+                        if (line.find("BROADCAST ") == 0) {
+                            // Remove "BROADCAST " prefix
+                            broadcast_msg += line.substr(10) + "\n";
+                        }
+                        else if (line.find("PERSONAL_TO_") == 0) {
+                            // Format: PERSONAL_TO_5 LIVES 5 POINTS 0 WINPTS 3
+                            size_t space_pos = line.find(" ", 12);
+                            int target_fd = std::stoi(line.substr(12, space_pos - 12));
+                            std::string msg = line.substr(space_pos + 1) + "\n";
+                            
+                            // Wyślij tylko do tego gracza
+                            for (int k = 1; k < nfds; k++) {
+                                if (fds[k].fd == target_fd) {
+                                    write(fds[k].fd, msg.c_str(), msg.size());
+                                    break;
+                                }
+                            }
+                        }
+
+
+                         else if (line.find("PERSONAL ") == 0) {
+                            // Remove "PERSONAL " prefix
+                            personal_msg += line.substr(9) + "\n";
+                        } else {
+                            // Lines without prefix go to sender only
+                            personal_msg += line + "\n";
+                        }
+                    }
+
+                    // Send broadcast messages to ALL players
+                    if (!broadcast_msg.empty()) {
+                        printf("Broadcasting to all: %s", broadcast_msg.c_str());
+                        for (int j = 1; j < nfds; j++) {
+                            write(fds[j].fd, broadcast_msg.c_str(), broadcast_msg.size());
+                        }
+                    }
+
+                    // Send personal messages only to the sender
+                    if (!personal_msg.empty()) {
+                        printf("Sending to fd=%d: %s", fds[i].fd, personal_msg.c_str());
+                        write(fds[i].fd, personal_msg.c_str(), personal_msg.size());
+                    }
+                }
             }
-
-            buf[bytes_read] = '\0';
-
-            printf("DEBUG RAW: [%s]\n", buf);
-
-            std::string msg(buf);
-            msg.erase(msg.find_last_not_of("\r\n") + 1);
-
-            std::string response = game_handle_message(game, fds[i].fd, msg);
-
-            if (!response.empty()) {
-                for (int j = 1; j < nfds; j++) {
-                    write(fds[i].fd, response.c_str(), response.size());
-                }
-    }
-}
         }
     }
+    
     for (int i = 0; i < nfds; i++){
         game_remove_player(game, fds[i].fd);
         close(fds[i].fd);
